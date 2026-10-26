@@ -1,7 +1,7 @@
 #ifndef CLI_H
 #define CLI_H
 
-#include "pcm_format.h
+#include "pcm_format.h"
 
 enum ParseResult {
     PARSE_OK,

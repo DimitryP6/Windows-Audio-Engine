@@ -1,6 +1,7 @@
 #ifndef PCM_FORMAT_H
 #define PCM_FORMAT_H
 
+
 #ifdef _WIN32
 enum pcm_format{
   PCM_FORMAT_S16_LE,
@@ -30,5 +31,6 @@ static inline unsigned int pcm_format_to_bits(pcm_format format) {
 #else
 #include <tinyalsa/pcm.h>
 #endif
+
 
 #endif // PCM_FORMAT_H

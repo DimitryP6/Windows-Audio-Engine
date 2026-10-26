@@ -38,12 +38,20 @@
 #include "control.h"
 
 #include "pcm_format.h"
+#include "thread_priority.h"
 
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+
+
+#ifndef _WIN32
 #include <pthread.h>
+#endif
+
+
 #include <signal.h>
+#include <csignal>
 #include <thread>
 
 static unsigned int play_card    = 0;
@@ -73,38 +81,27 @@ static void on_sigint(int)
 
 static int install_sigint_handler()
 {
+#ifdef _WIN32
+    return std::signal(SIGINT, on_sigint) == SIG_ERR ? -1 : 0;
+#else
     struct sigaction sa = {};
-
     sa.sa_handler = on_sigint;
     sigemptyset(&sa.sa_mask);
     sa.sa_flags = SA_RESTART;
-
     return sigaction(SIGINT, &sa, nullptr);
+#endif
 }
 
 static void start_engine(SineEngine *engine, bool *run_ok)
 {
-    sched_param param = {};
-    param.sched_priority = 99;
-
-    const int ret = pthread_setschedparam(pthread_self(), SCHED_FIFO, &param);
-    if (ret != 0)
-        fprintf(stderr, "WARNING: cannot set audio thread priority: %s\n",
-                strerror(ret));
-
+    void* optional_handle = raise_audio_priority();
     *run_ok = engine->run();
+    restore_audio_priority(optional_handle);
 }
 
 static void start_controls(SineEngine *engine)
 {
-    sched_param param = {};
-    param.sched_priority = 90;
-
-    const int ret = pthread_setschedparam(pthread_self(), SCHED_FIFO, &param);
-    if (ret != 0)
-        fprintf(stderr, "WARNING: cannot set control thread priority: %s\n",
-                strerror(ret));
-
+    raise_control_priority();
     run_controls(engine);
 }
 
@@ -166,12 +163,20 @@ int main(int argc, char **argv)
 
     audio_thread.join();
 
+
+#ifdef _WIN32
+    // No pthread_cancel on Windows: the control thread may be stuck in
+    // getchar(), so let it go; it ends with the process
+    control_thread.detach();
+#else
     const int cancel_ret = pthread_cancel(control_thread.native_handle());
     if (cancel_ret != 0)
         fprintf(stderr, "FAIL: cannot cancel control thread: %s\n",
                 strerror(cancel_ret));
-
+    
     control_thread.join();
+#endif
+
 
     if (!run_ok)
         return EXIT_FAILURE;
