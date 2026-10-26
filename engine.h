@@ -1,20 +1,9 @@
 #ifndef ENGINE_H
 #define ENGINE_H
 
-#include "pcm_format.h"
+#include "audio_backend.h"
 
 #include <atomic>
-
-struct engine_config {
-    unsigned int play_card, play_device;
-    unsigned int cap_card, cap_device;
-    unsigned int rate, render_block_size;
-    unsigned int cap_period_size, play_period_size;
-    unsigned int cap_period_count, play_period_count;
-    unsigned int priming_frames;
-    unsigned int cap_channels, play_channels;
-    pcm_format   cap_format, play_format;
-};
 
 // The part every app shares. It plays nothing by itself: a derived class
 // writes render()
