@@ -4,9 +4,9 @@
 #include <cstdio>
 
 
-class TinyalsaBackend : public AudioBackend {
+class TinyAlsaBackend : public AudioBackend {
   public:
-    ~TinyalsaBackend() override;
+    ~TinyAlsaBackend() override;
     bool open(const engine_config &cfg, unsigned int threshold_frames) override;
     bool prime(unsigned int frames) override;
     bool start() override { return true; }
@@ -20,7 +20,7 @@ class TinyalsaBackend : public AudioBackend {
 };
 
 
-bool TinyalsaBackend::open(const engine_config &cfg,
+bool TinyAlsaBackend::open(const engine_config &cfg,
                            unsigned int threshold_frames)
 {
   this->play_bytes_per_frame = cfg.play_channels
@@ -61,7 +61,7 @@ bool TinyalsaBackend::open(const engine_config &cfg,
   return true;
 }
 
-TinyalsaBackend::~TinyalsaBackend()
+TinyAlsaBackend::~TinyAlsaBackend()
 {
   if (this->cap_pcm && pcm_close(this->cap_pcm) < 0)
       fprintf(stderr, "FAIL: capture pcm_close returned an error\n");
@@ -70,7 +70,7 @@ TinyalsaBackend::~TinyalsaBackend()
       fprintf(stderr, "FAIL: playback pcm_close returned an error\n");
 }
 
-bool TinyalsaBackend::prime(unsigned int frames)
+bool TinyAlsaBackend::prime(unsigned int frames)
 {
   unsigned char *silence =
       new unsigned char[frames * this->play_bytes_per_frame]();
@@ -87,21 +87,21 @@ bool TinyalsaBackend::prime(unsigned int frames)
   return true;
 }
 
-Result TinyalsaBackend::read(void *buffer, unsigned int frames)
+Result TinyAlsaBackend::read(void *buffer, unsigned int frames)
 {
   if (pcm_readi(cap_pcm, buffer, frames) < 0)
     return recover(cap_pcm, "capture");
   return BACKEND_OK;
 }
 
-Result TinyalsaBackend::write(const void *buffer, unsigned int frames)
+Result TinyAlsaBackend::write(const void *buffer, unsigned int frames)
 {
   if (pcm_writei(play_pcm, buffer, frames) < 0)
     return recover(play_pcm, "playback");
   return BACKEND_OK;
 }
 
-Result TinyalsaBackend::recover(pcm *stream, const char *name)
+Result TinyAlsaBackend::recover(pcm *stream, const char *name)
 {
   // EPIPE: the ring over- or underran. Anything else is a real failure
   if (errno != EPIPE) {
