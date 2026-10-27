@@ -1,6 +1,5 @@
 #include "engine.h"
 
-#include <cerrno>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -110,48 +109,14 @@ void AudioEngine::configure(const engine_config &cfg)
         fprintf(stderr, "NOTE: priming (%u frames) is deeper than the capture "
                         "ring (%u frames)\n\n", threshold_frames, cap_ring);
 
-    pcm_config play_config = {};
-    play_config.channels        = cfg.play_channels;
-    play_config.rate            = cfg.rate;
-    play_config.period_size     = cfg.play_period_size;
-    play_config.period_count    = cfg.play_period_count;
-    play_config.format          = cfg.play_format;
-    play_config.start_threshold = threshold_frames;
-
-    play_pcm = pcm_open(cfg.play_card, cfg.play_device,
-                        PCM_OUT | PCM_NORESTART, &play_config);
-    if (!pcm_is_ready(play_pcm)) {
-        fprintf(stderr, "FAIL: cannot open playback %u,%u: %s\n",
-                cfg.play_card, cfg.play_device, pcm_get_error(play_pcm));
-        return;
-    }
-
-    pcm_config cap_config = {};
-    cap_config.channels        = cfg.cap_channels;
-    cap_config.rate            = cfg.rate;
-    cap_config.period_size     = cfg.cap_period_size;
-    cap_config.period_count    = cfg.cap_period_count;
-    cap_config.format          = cfg.cap_format;
-    cap_config.start_threshold = 1;
-
-    cap_pcm = pcm_open(cfg.cap_card, cfg.cap_device,
-                       PCM_IN | PCM_NORESTART, &cap_config);
-    if (!pcm_is_ready(cap_pcm)) {
-        fprintf(stderr, "FAIL: cannot open capture %u,%u: %s\n",
-                cfg.cap_card, cfg.cap_device, pcm_get_error(cap_pcm));
-        return;
-    }
+    this->cfg = cfg;
 
     ready = true;
 }
 
 AudioEngine::~AudioEngine()
 {
-    if (cap_pcm && pcm_close(cap_pcm) < 0)
-        fprintf(stderr, "FAIL: capture pcm_close returned an error\n");
-
-    if (play_pcm && pcm_close(play_pcm) < 0)
-        fprintf(stderr, "FAIL: playback pcm_close returned an error\n");
+    delete this->backend;
 
     delete[] play_block_float;
     delete[] cap_block_float;
@@ -195,79 +160,37 @@ void AudioEngine::convert_to_raw()
     }
 }
 
-bool AudioEngine::prime_playback()
-{
-    const unsigned int bytes_per_frame = ctx.out_channels
-                                         * play_bytes_per_sample_container;
-
-    unsigned char *silence =
-        new unsigned char[threshold_frames * bytes_per_frame]();
-
-    const int ret = pcm_writei(play_pcm, silence, threshold_frames);
-
-    delete[] silence;
-
-    if (ret < 0) {
-        fprintf(stderr, "FAIL: priming write: %s\n", pcm_get_error(play_pcm));
-        return false;
-    }
-
-    return true;
-}
-
 bool AudioEngine::run()
 {
-    if (!prime_playback())
-        return false;
+    this->backend = create_backend();
+    bool failed = !this->backend->open(this->cfg, this->threshold_frames) 
+        || !this->backend->prime(this->threshold_frames) 
+        || !this->backend->start();
 
-    bool failed = false;
-
-    while (running) {
-        if (pcm_readi(cap_pcm, cap_block_raw, ctx.block_size) < 0) {
-            if (errno == EPIPE) {
-                printf("\nOverrun detected! Recovery in progress...\n");
-
-                if (pcm_prepare(cap_pcm) < 0) {
-                    fprintf(stderr, "\nFAIL: capture prepare: %s\n",
-                            pcm_get_error(cap_pcm));
-                    failed = true;
-                    break;
-                }
-
-                continue;
-            }
-
-            fprintf(stderr, "\nFAIL: read: %s\n", pcm_get_error(cap_pcm));
+    while (!failed && running) {
+        const Result read_result = this->backend->read(this->cap_block_raw, this->ctx.block_size);
+        if (read_result == BACKEND_XRUN) {
+            printf("\nOverrun Detected! Recovered.\n");
+            continue;
+        } else if (read_result == BACKEND_FAIL) {
             failed = true;
             break;
         }
-
         convert_to_float();
-
         // Whichever derived class this is, its render() runs here
         render(ctx);
-
         convert_to_raw();
-
-        if (pcm_writei(play_pcm, play_block_raw, ctx.block_size) < 0) {
-            if (errno == EPIPE) {
-                printf("\nUnderrun detected! Recovery in progress...\n");
-
-                if (pcm_prepare(play_pcm) < 0) {
-                    fprintf(stderr, "\nFAIL: playback prepare: %s\n",
-                            pcm_get_error(play_pcm));
-                    failed = true;
-                    break;
-                }
-
-                continue;
-            }
-
-            fprintf(stderr, "\nFAIL: write: %s\n", pcm_get_error(play_pcm));
+        const Result write_result = this->backend->write(this->play_block_raw, this->ctx.block_size);
+        if (write_result == BACKEND_XRUN) {
+            printf("\nUnderrun Detected! Recovered.\n");
+            continue;
+        } else if (write_result == BACKEND_FAIL) {
             failed = true;
             break;
         }
     }
-
+    // For Windows, WASAPI objects have to be created, used, and released on the same thread.
+    delete backend;
+    this->backend = nullptr;
     return !failed;
 }
