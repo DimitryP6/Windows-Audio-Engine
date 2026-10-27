@@ -36,10 +36,8 @@ private:
     void convert_to_float();
     void convert_to_raw();
 
-    bool prime_playback();
-
-    pcm *play_pcm = nullptr;
-    pcm *cap_pcm  = nullptr;
+    AudioBackend *backend = nullptr;
+    engine_config cfg = {};
 
     unsigned char *cap_block_raw  = nullptr;
     unsigned char *play_block_raw = nullptr;
