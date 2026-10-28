@@ -157,7 +157,16 @@ bool WindowsBackend::open(const engine_config &cfg, unsigned int threshold_frame
 }
 
 bool prime(unsigned int frames) override {
-
+  // Stream only starts after calling start, so cannot wait with event. Fill what we can.
+  const UINT32 n = frames < buffer_frames ? frames : buffer_frames;
+  BYTE *data = nullptr;
+  // https://learn.microsoft.com/en-us/windows/win32/api/audioclient/nf-audioclient-iaudiorenderclient-getbuffer
+  if (!check(this->renderer->GetBuffer(n, &data), "priming GetBuffer"))
+    return false;
+  // Release the data gotten, so that stream can read. Mark the data as silent.
+  // https://learn.microsoft.com/en-us/windows/win32/api/audioclient/nf-audioclient-iaudiorenderclient-releasebuffer
+  return check(this->render->ReleaseBuffer(n, AUDCLNT_BUFFERFLAGS_SILENT),
+                "priming ReleaseBuffer");
 }
 
 bool start() override {
