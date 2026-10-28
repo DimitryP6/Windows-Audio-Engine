@@ -3,7 +3,7 @@
 
 
 #ifdef _WIN32
-enum pcm_format{
+enum pcm_format {
   PCM_FORMAT_S16_LE,
   PCM_FORMAT_S24_3LE,
   PCM_FORMAT_S24_LE,
