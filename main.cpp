@@ -2,29 +2,14 @@
  * Northeastern University — Fall 2026
  * Victor Zappi, 2026
  *
- * Unit 2 — Class 8: App Framework
+ * Mini Porject
  *
- * 1_sine_app — the first app, built on a reusable engine
- *
- * AudioEngine is split in two. The base class keeps what every app needs:
- * the PCMs, the conversions, priming, run() and stop(). Its render() is
- * pure virtual, so the base class no longer decides what is played.
- * SineEngine derives from it and adds this app's part. A new app needs only
- * a new derived class.
- *
- * Messages through a FIFO plus a derived engine: this is the app framework,
- * the smallest structure that every app from here on reuses.
- *
- * The keys move in musical steps again, as in 3_thread_prios.
- *
- * One piece is left for you, in sine_engine.h and sine_engine.cpp: the rest
- * of SineEngine.
- *
- * main.cpp — audio parameters, the signal handler, the two thread functions
- *            and the app's engine
- *
- * build: g++ -Wall main.cpp engine.cpp sine_engine.cpp cli.cpp control.cpp \
- *            -ltinyalsa_t3 -pthread -o 1_sine_app
+ * Linux build: g++ -Wall -std=c++17 main.cpp engine.cpp sine_engine.cpp cli.cpp control.cpp tinyalsa_backend.cpp \
+ * -ltinyalsa_t3 -pthread -o 1_sine_app
+ * 
+ * Windows build: g++ -Wall -std=c++17 main.cpp engine.cpp sine_engine.cpp cli.cpp control.cpp windows_backend.cpp \
+ * -lole32 -lavrt -o 1_sine_app.exe
+ * 
  * run:   ./1_sine_app [-b frames] [-p CAP,PLAY] [-n CAP,PLAY]
  *              [-c CAP,PLAY] [-f CAP,PLAY] [-t frames] [-r rate]
  *                     [-o CARD,DEVICE] [-i CARD,DEVICE] (-h for help)

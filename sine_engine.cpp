@@ -1,5 +1,5 @@
+#define _USE_MATH_DEFINES // https://learn.microsoft.com/en-us/cpp/c-runtime-library/math-constants?view=msvc-170
 #include "sine_engine.h"
-
 #include <cmath>
 
 void SineEngine::render(const AudioContext &ctx)
