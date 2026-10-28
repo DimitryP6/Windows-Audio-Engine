@@ -211,5 +211,11 @@ Result write(const void *buffer, unsigned int frames) {
 }
 
 Result read(void *buffer, unsigned int frames) {
-  
+  // Ignore capture for now.
+  memset(buffer, 0, frames * this->cap_bytes_per_frame);
+  return BACKEND_OK;
+}
+
+AudioBackend *create_backend() {
+  return new WindowsBackend();
 }
