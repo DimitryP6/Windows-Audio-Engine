@@ -1,22 +1,28 @@
 #include "audio_backend.h"
 #include <windows.h> // HANDLE, DWORD, etc.
-#include "mmdeviceapi.h" // Required by IMMDevice...
-#include "audioclient.h" // Require by IAudioClient...
+#include <mmdeviceapi.h> // Required by IMMDevice...
+#include <audioclient.h> // Require by IAudioClient...
+#include <mmreg.h> // WAVEFORMATEXTENSIBLE...
+#include <cstdio>
+#include <cstring>
 
 
 // KSDATAFORMAT_SUBTYPE_PCM for format configuration.
 static const GUID pcm_subtype = {0x00000001, 0x0000, 0x0010, {0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71}};
+// Pull mechanism event timeout.
+static const DWORD wait_timeout_ms = 2000;
 
 
-class WindowsBackend : AudioBackend {
+class WindowsBackend : public AudioBackend {
   public:
-    ~AudioBackend() override;
+    ~WindowsBackend() override;
     bool open(const engine_config &cfg, unsigned int threshold_frames) override;
     bool prime(unsigned int frames) override;
     bool start() override;
     Result write(const void *buffer, unsigned int frames) override;
     Result read(void *buffer, unsigned int frames) override;
   private:
+    bool check(HRESULT hr, const char *what);
     /**
      * First are the field for the device enumerator, device, client, render client, and a handle.
      * https://learn.microsoft.com/en-us/windows/win32/coreaudio/rendering-a-stream
@@ -40,11 +46,11 @@ class WindowsBackend : AudioBackend {
     bool started   = false;
 };
 
-WasapiBackend::~WasapiBackend() {
+WindowsBackend::~WindowsBackend() {
   if (this->started)
     this->client->Stop();
-  if (this->render) 
-    this->render->Release();
+  if (this->renderer) 
+    this->renderer->Release();
   if (this->client)
     this->client->Release();
   if (this->device)
@@ -59,8 +65,7 @@ WasapiBackend::~WasapiBackend() {
 }
 
 // https://learn.microsoft.com/en-us/windows/win32/com/error-handling-in-com
-bool WindowsBackend::check(HRESULT hr, const char *what)
-{
+bool WindowsBackend::check(HRESULT hr, const char *what) {
   if (SUCCEEDED(hr))
     return true;
   // https://learn.microsoft.com/en-us/office/client-developer/outlook/mapi/hresult
@@ -80,15 +85,15 @@ bool WindowsBackend::open(const engine_config &cfg, unsigned int threshold_frame
   // CoCreateInstance docs: // https://learn.microsoft.com/en-us/windows/win32/api/combaseapi/nf-combaseapi-cocreateinstance
   if (!this->check(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr,
                                     CLSCTX_ALL, __uuidof(IMMDeviceEnumerator),
-                                    reinterpret_cast<void **>(this.enumerator)),
+                                    reinterpret_cast<void **>(&this->enumerator)),
                                     "create device enumerator"))
     return false;
   // https://learn.microsoft.com/en-us/windows/win32/api/mmdeviceapi/nf-mmdeviceapi-immdeviceenumerator-getdefaultaudioendpoint
-  if (!this->check(this->enumerator->GetDefaultAudioEndpoint(eRender, eMultimedia, this.device), 
+  if (!this->check(this->enumerator->GetDefaultAudioEndpoint(eRender, eMultimedia, &this->device), 
   "get default playback device"))
     return false;
   // https://learn.microsoft.com/en-us/windows/win32/api/mmdeviceapi/nf-mmdeviceapi-immdevice-activate
-  if (!this->check(this->device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, reinterpret_cast<void **>(this.client)),
+  if (!this->check(this->device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, reinterpret_cast<void **>(&this->client)),
   "activate audio client"))
     return false;
   // https://learn.microsoft.com/en-us/windows/win32/api/mmeapi/ns-mmeapi-waveformatex
@@ -96,7 +101,7 @@ bool WindowsBackend::open(const engine_config &cfg, unsigned int threshold_frame
   WAVEFORMATEX *pwfx = nullptr;
   if (SUCCEEDED(this->client->GetMixFormat(&pwfx))) {
     // https://learn.microsoft.com/en-us/windows/win32/api/audioclient/nf-audioclient-iaudioclient-getmixformat
-    printf("WASAPI mix: %u samples per second, %u channels, and %u bits per sample.\n", 
+    printf("WASAPI mix: %lu samples per second, %u channels, and %u bits per sample.\n", 
             pwfx->nSamplesPerSec, pwfx->nChannels, pwfx->wBitsPerSample);
     // Need to free wave format structure: https://learn.microsoft.com/en-us/windows/win32/api/combaseapi/nf-combaseapi-cotaskmemfree
     CoTaskMemFree(pwfx);
@@ -106,7 +111,7 @@ bool WindowsBackend::open(const engine_config &cfg, unsigned int threshold_frame
   if (cfg.play_format == PCM_FORMAT_S24_LE) 
     valid_bits = 24;
   // Need to set an extensible wave format: https://learn.microsoft.com/en-us/windows/win32/api/mmreg/ns-mmreg-waveformatextensible
-  WAVEFORMATEXTENSIBLE format = {}
+  WAVEFORMATEXTENSIBLE format = {};
   format.Format.wFormatTag = WAVE_FORMAT_EXTENSIBLE;
   format.Format.nChannels = cfg.play_channels;
   format.Format.nSamplesPerSec = cfg.rate;
@@ -127,8 +132,8 @@ bool WindowsBackend::open(const engine_config &cfg, unsigned int threshold_frame
   // Set auto conversion, event-driven, and quality enhancement flags:
   // https://learn.microsoft.com/en-us/windows/win32/coreaudio/audclnt-streamflags-xxx-constants
   DWORD flags = AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM 
-                || AUDCLNT_STREAMFLAGS_EVENTCALLBACK 
-                || AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY
+                | AUDCLNT_STREAMFLAGS_EVENTCALLBACK 
+                | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY;
   // https://learn.microsoft.com/en-us/windows/win32/api/audioclient/nf-audioclient-iaudioclient-initialize
   if (!this->check(this->client->Initialize(AUDCLNT_SHAREMODE_SHARED, flags, 0, 0,
                                   &format.Format, nullptr),
@@ -136,11 +141,11 @@ bool WindowsBackend::open(const engine_config &cfg, unsigned int threshold_frame
     return false;
   // Get the number of audio frames that the buffer can hold.
   // https://learn.microsoft.com/en-us/windows/win32/api/audioclient/nf-audioclient-iaudioclient-getbuffersize
-  if (!this->check(this->client->GetBufferSize(this.buffer_frames), "get buffer size"))
+  if (!this->check(this->client->GetBufferSize(&this->buffer_frames), "get buffer size"))
     return false;
   
   // Create an event: https://learn.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-createeventw
-  HANDLE event = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+  this->event = CreateEventW(nullptr, FALSE, FALSE, nullptr);
   if (!event) {
     fprintf(stderr, "FAIL: CreateEvent: %lu\n", GetLastError());
     return false;
@@ -148,15 +153,15 @@ bool WindowsBackend::open(const engine_config &cfg, unsigned int threshold_frame
   // Set event handle: https://learn.microsoft.com/en-us/windows/win32/api/audioclient/nf-audioclient-iaudioclient-seteventhandle
   if (!check(client->SetEventHandle(event), "set event handle"))
     return false;
-  // Start the render service: https://learn.microsoft.com/en-us/windows/win32/api/audioclient/nf-audioclient-iaudioclient-getservice
+  // Set the render service: https://learn.microsoft.com/en-us/windows/win32/api/audioclient/nf-audioclient-iaudioclient-getservice
   if (!check(client->GetService(__uuidof(IAudioRenderClient),
-                                  reinterpret_cast<void **>(this.renderer)),
+                                  reinterpret_cast<void **>(&this->renderer)),
               "get render client"))
     return false;
   return true;
 }
 
-bool prime(unsigned int frames) {
+bool WindowsBackend::prime(unsigned int frames) {
   // Stream only starts after calling start, so cannot wait with event. Fill what we can.
   const UINT32 n = frames < this->buffer_frames ? frames : this->buffer_frames;
   BYTE *data = nullptr;
@@ -165,11 +170,11 @@ bool prime(unsigned int frames) {
     return false;
   // Release the data gotten, so that stream can read. Mark the data as silent.
   // https://learn.microsoft.com/en-us/windows/win32/api/audioclient/nf-audioclient-iaudiorenderclient-releasebuffer
-  return check(this->render->ReleaseBuffer(n, AUDCLNT_BUFFERFLAGS_SILENT),
+  return check(this->renderer->ReleaseBuffer(n, AUDCLNT_BUFFERFLAGS_SILENT),
                 "priming ReleaseBuffer");
 }
 
-bool start() {
+bool WindowsBackend::start() {
   // https://learn.microsoft.com/en-us/windows/win32/api/audioclient/nf-audioclient-iaudioclient-start
   if (!check(this->client->Start(), "start stream"))
     return false;
@@ -177,7 +182,7 @@ bool start() {
   return true;
 }
 
-Result write(const void *buffer, unsigned int frames) {
+Result WindowsBackend::write(const void *buffer, unsigned int frames) {
   const BYTE *src = static_cast<const BYTE *>(buffer);
   while (frames > 0) {
     UINT32 padding;
@@ -188,7 +193,7 @@ Result write(const void *buffer, unsigned int frames) {
     UINT32 room = this->buffer_frames - padding;
     if (room == 0) {
       // https://learn.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-waitforsingleobject
-      if (WaitForSingleObject(this->event, wait_timeout_ms)) {
+      if (WaitForSingleObject(this->event, wait_timeout_ms) != WAIT_OBJECT_0) {
         fprintf(stderr, "FAIL: no event from the audio engine in %lu ms\n", wait_timeout_ms);
         return BACKEND_FAIL;
       }
@@ -198,19 +203,19 @@ Result write(const void *buffer, unsigned int frames) {
     BYTE *dst = nullptr;
     // Get the buffer, write to it, and then release it.
     // https://learn.microsoft.com/en-us/windows/win32/api/audioclient/nn-audioclient-iaudiorenderclient
-    if (!this->check(this->renderer->GetBuffer(n, &dst), "GetBuffer"))
+    if (!this->check(this->renderer->GetBuffer(num_frames_written, &dst), "GetBuffer"))
       return BACKEND_FAIL;
     memcpy(dst, src, num_frames_written * this->play_bytes_per_frame);
-    if (!this->check(renderer->ReleaseBuffer(n, 0), "ReleaseBuffer"))
+    if (!this->check(renderer->ReleaseBuffer(num_frames_written, 0), "ReleaseBuffer"))
       return BACKEND_FAIL;
     // Advance the source and frames left to write.
-    src += num_frames_written & this->play_bytes_per_frame;
+    src += num_frames_written * this->play_bytes_per_frame;
     frames -= num_frames_written;
   }
   return BACKEND_OK;
 }
 
-Result read(void *buffer, unsigned int frames) {
+Result WindowsBackend::read(void *buffer, unsigned int frames) {
   // Ignore capture for now.
   memset(buffer, 0, frames * this->cap_bytes_per_frame);
   return BACKEND_OK;
