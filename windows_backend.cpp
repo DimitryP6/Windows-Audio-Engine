@@ -30,7 +30,7 @@ class WindowsBackend : AudioBackend {
     // https://learn.microsoft.com/en-us/windows/win32/api/audioclient/nn-audioclient-iaudiorenderclient
     IAudioRenderClient *renderer = nullptr;
     // WINDOWS calls return an opaque handle object.
-    HANDLE handle = nullptr;
+    HANDLE event = nullptr;
     // In WASAPI, nothing blocks, so keep track of buffer frames available to write to.
     UINT32 buffer_frames = 0;
     // TinyAlsa knows the format, and writes for us. WASAPI hands a device pointer, so have to set ourselves.
@@ -39,6 +39,24 @@ class WindowsBackend : AudioBackend {
     bool com_ready = false;
     bool started   = false;
 };
+
+WasapiBackend::~WasapiBackend() {
+  if (this->started)
+    this->client->Stop();
+  if (this->render) 
+    this->render->Release();
+  if (this->client)
+    this->client->Release();
+  if (this->device)
+    this->device->Release();
+  if (this->enumerator)
+    this->enumerator->Release();
+  if (this->event)
+    CloseHandle(this->event);
+  // https://learn.microsoft.com/en-us/windows/win32/api/combaseapi/nf-combaseapi-couninitialize
+  if (this->com_ready)
+    CoUninitialize();
+}
 
 // https://learn.microsoft.com/en-us/windows/win32/com/error-handling-in-com
 bool WindowsBackend::check(HRESULT hr, const char *what)
@@ -54,10 +72,10 @@ bool WindowsBackend::check(HRESULT hr, const char *what)
 // Called on the audio thread, from the engine's run.
 bool WindowsBackend::open(const engine_config &cfg, unsigned int threshold_frames) {
   // https://learn.microsoft.com/en-us/windows/win32/api/combaseapi/nf-combaseapi-coinitializeex
-  if (!this->check(CoInitializeEx(nullptr, COINIT_MULTITHREADED), "CoInitializeEx"))
+  if (!this->check(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED), "CoInitializeEx"))
     // https://learn.microsoft.com/en-us/windows/win32/api/objbase/ne-objbase-coinit
     return false;
-  com_ready = true;
+  this->com_ready = true;
   // Where this pattern is from: https://learn.microsoft.com/en-us/windows/win32/coreaudio/rendering-a-stream
   // CoCreateInstance docs: // https://learn.microsoft.com/en-us/windows/win32/api/combaseapi/nf-combaseapi-cocreateinstance
   if (!this->check(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr,
@@ -111,5 +129,29 @@ bool WindowsBackend::open(const engine_config &cfg, unsigned int threshold_frame
   DWORD flags = AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM 
                 || AUDCLNT_STREAMFLAGS_EVENTCALLBACK 
                 || AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY
+  // https://learn.microsoft.com/en-us/windows/win32/api/audioclient/nf-audioclient-iaudioclient-initialize
+  if (!this->check(this->client->Initialize(AUDCLNT_SHAREMODE_SHARED, flags, 0, 0,
+                                  &format.Format, nullptr),
+                    "initialize shared stream"))
+    return false;
+  // Get the number of audio frames that the buffer can hold.
+  // https://learn.microsoft.com/en-us/windows/win32/api/audioclient/nf-audioclient-iaudioclient-getbuffersize
+  if (!this->check(this->client->GetBufferSize(&buffer_frames), "get buffer size"))
+    return false;
   
+  // Create an event: https://learn.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-createeventw
+  HANDLE event = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+  if (!event) {
+    fprintf(stderr, "FAIL: CreateEvent: %lu\n", GetLastError());
+    return false;
+  }
+  // Set event handle: https://learn.microsoft.com/en-us/windows/win32/api/audioclient/nf-audioclient-iaudioclient-seteventhandle
+  if (!check(client->SetEventHandle(event), "set event handle"))
+    return false;
+  // Start the render service: https://learn.microsoft.com/en-us/windows/win32/api/audioclient/nf-audioclient-iaudioclient-getservice
+  if (!check(client->GetService(__uuidof(IAudioRenderClient),
+                                  reinterpret_cast<void **>(this.renderer)),
+              "get render client"))
+    return false;
+  return true;
 }
