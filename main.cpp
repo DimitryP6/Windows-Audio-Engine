@@ -2,11 +2,12 @@
  * Northeastern University — Fall 2026
  * Victor Zappi, 2026
  *
- * Mini Porject
+ * Mini Project
  *
  * Linux build: g++ -Wall -std=c++17 main.cpp engine.cpp sine_engine.cpp cli.cpp control.cpp tinyalsa_backend.cpp \
  * -ltinyalsa_t3 -pthread -o 1_sine_app
  * 
+ * https://learn.microsoft.com/en-us/windows/win32/tapi/libraries-required for ole32 for COM. MMCS in MMCS documentation.
  * Windows build: g++ -Wall -std=c++17 main.cpp engine.cpp sine_engine.cpp cli.cpp control.cpp windows_backend.cpp \
  * -lole32 -lavrt -o 1_sine_app.exe
  * 
@@ -108,7 +109,7 @@ int main(int argc, char **argv)
         return EXIT_FAILURE;
     }
 
-    printf("Sine App — Class 8: App Framework\n\n");
+    printf("Mini Project - Sine App\n\n");
 
     engine_config config = {};
     config.play_card         = play_card;
@@ -150,8 +151,7 @@ int main(int argc, char **argv)
 
 
 #ifdef _WIN32
-    // No pthread_cancel on Windows: the control thread may be stuck in
-    // getchar(), so let it go; it ends with the process
+    // No pthread cancel on windows so let it go.
     control_thread.detach();
 #else
     const int cancel_ret = pthread_cancel(control_thread.native_handle());

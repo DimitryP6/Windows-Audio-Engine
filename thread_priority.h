@@ -14,10 +14,12 @@ static inline void raise_control_priority();
 
 #include <windows.h>
 #include <avrt.h>
+// General documentation: https://learn.microsoft.com/en-us/windows/win32/procthread/multimedia-class-scheduler-service
 
 
 static inline void* raise_audio_priority() {
   DWORD task_index = 0;
+  // https://learn.microsoft.com/en-us/windows/win32/api/avrt/nf-avrt-avsetmmthreadcharacteristicsw
   HANDLE handle = AvSetMmThreadCharacteristicsW(L"Pro Audio", &task_index);
   if (handle == NULL) {
     fprintf(stderr,"Failed to set MM thread characteristics. Error: %lu\n", GetLastError());
@@ -29,12 +31,15 @@ static inline void* raise_audio_priority() {
 static inline void restore_audio_priority(void* optional_handle) {
   if (optional_handle == NULL) {
     return;
-  }else if (!AvRevertMmThreadCharacteristics(optional_handle)) {
+  // https://learn.microsoft.com/en-us/windows/win32/api/avrt/nf-avrt-avrevertmmthreadcharacteristics
+  } else if (!AvRevertMmThreadCharacteristics(optional_handle)) {
     fprintf(stderr, "Failed to revert MM thread characteristics. Error: %lu\n", GetLastError());
   }
 }
 
 static inline void raise_control_priority() {
+  // https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-setthreadpriority
+  // https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getcurrentthread
   if (!SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL)) {
     fprintf(stderr, "WARNING: cannot set control thread priority. Error: %lu\n",
             GetLastError());
