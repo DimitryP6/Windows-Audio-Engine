@@ -155,3 +155,15 @@ bool WindowsBackend::open(const engine_config &cfg, unsigned int threshold_frame
     return false;
   return true;
 }
+
+bool prime(unsigned int frames) override {
+
+}
+
+bool start() override {
+  // https://learn.microsoft.com/en-us/windows/win32/api/audioclient/nf-audioclient-iaudioclient-start
+  if (!check(this->client->Start(), "start stream"))
+    return false;
+  this->started = true;
+  return true;
+}
