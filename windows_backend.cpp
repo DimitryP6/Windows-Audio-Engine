@@ -136,7 +136,7 @@ bool WindowsBackend::open(const engine_config &cfg, unsigned int threshold_frame
     return false;
   // Get the number of audio frames that the buffer can hold.
   // https://learn.microsoft.com/en-us/windows/win32/api/audioclient/nf-audioclient-iaudioclient-getbuffersize
-  if (!this->check(this->client->GetBufferSize(&buffer_frames), "get buffer size"))
+  if (!this->check(this->client->GetBufferSize(this.buffer_frames), "get buffer size"))
     return false;
   
   // Create an event: https://learn.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-createeventw
@@ -156,9 +156,9 @@ bool WindowsBackend::open(const engine_config &cfg, unsigned int threshold_frame
   return true;
 }
 
-bool prime(unsigned int frames) override {
+bool prime(unsigned int frames) {
   // Stream only starts after calling start, so cannot wait with event. Fill what we can.
-  const UINT32 n = frames < buffer_frames ? frames : buffer_frames;
+  const UINT32 n = frames < this->buffer_frames ? frames : this->buffer_frames;
   BYTE *data = nullptr;
   // https://learn.microsoft.com/en-us/windows/win32/api/audioclient/nf-audioclient-iaudiorenderclient-getbuffer
   if (!check(this->renderer->GetBuffer(n, &data), "priming GetBuffer"))
@@ -169,10 +169,47 @@ bool prime(unsigned int frames) override {
                 "priming ReleaseBuffer");
 }
 
-bool start() override {
+bool start() {
   // https://learn.microsoft.com/en-us/windows/win32/api/audioclient/nf-audioclient-iaudioclient-start
   if (!check(this->client->Start(), "start stream"))
     return false;
   this->started = true;
   return true;
+}
+
+Result write(const void *buffer, unsigned int frames) {
+  const BYTE *src = static_cast<const BYTE *>(buffer);
+  while (frames > 0) {
+    UINT32 padding;
+    // Get the number of unread frames.
+    // https://learn.microsoft.com/en-us/windows/win32/api/audioclient/nf-audioclient-iaudioclient-getcurrentpadding
+    if (!this->check(this->client->GetCurrentPadding(&padding), "get padding"))
+      return BACKEND_FAIL;
+    UINT32 room = this->buffer_frames - padding;
+    if (room == 0) {
+      // https://learn.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-waitforsingleobject
+      if (WaitForSingleObject(this->event, wait_timeout_ms)) {
+        fprintf(stderr, "FAIL: no event from the audio engine in %lu ms\n", wait_timeout_ms);
+        return BACKEND_FAIL;
+      }
+      continue;
+    }
+    const UINT32 num_frames_written = frames < room ? frames : room;
+    BYTE *dst = nullptr;
+    // Get the buffer, write to it, and then release it.
+    // https://learn.microsoft.com/en-us/windows/win32/api/audioclient/nn-audioclient-iaudiorenderclient
+    if (!this->check(this->renderer->GetBuffer(n, &dst), "GetBuffer"))
+      return BACKEND_FAIL;
+    memcpy(dst, src, num_frames_written * this->play_bytes_per_frame);
+    if (!this->check(renderer->ReleaseBuffer(n, 0), "ReleaseBuffer"))
+      return BACKEND_FAIL;
+    // Advance the source and frames left to write.
+    src += num_frames_written & this->play_bytes_per_frame;
+    frames -= num_frames_written;
+  }
+  return BACKEND_OK;
+}
+
+Result read(void *buffer, unsigned int frames) {
+  
 }
